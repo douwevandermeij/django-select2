@@ -3,12 +3,15 @@ from __future__ import absolute_import, unicode_literals
 
 import json
 
+from django.core import signing
 from django.core.exceptions import PermissionDenied
+from django.core.signing import BadSignature
 from django.http import Http404, HttpResponse
 from django.utils.six import binary_type
 from django.views.generic import View
 
-from .util import get_field, is_valid_id
+from .cache import cache
+from .conf import settings
 
 NO_ERR_RESP = 'nil'
 """
@@ -177,11 +180,20 @@ class AutoResponseView(Select2View):
     """
     def check_all_permissions(self, request, *args, **kwargs):
         id_ = request.GET.get('field_id', None)
-        if id_ is None or not is_valid_id(id_):
-            raise Http404('field_id not found or is invalid')
-        field = get_field(id_)
-        if field is None:
-            raise Http404('field_id not found')
+        if not id_:
+            raise Http404('No "field_id" provided.')
+        try:
+            key = signing.loads(id_)
+        except BadSignature:
+            raise Http404('Invalid "field_id".')
+        else:
+            cache_key = "".join([
+                settings.SELECT2_CACHE_PREFIX,
+                key
+            ])
+            field = cache.get(cache_key)
+            if field is None:
+                raise Http404('field_id not found')
 
         if not field.security_check(request, *args, **kwargs):
             raise PermissionDenied('permission denied')
